@@ -57,22 +57,73 @@
 ### Аутентифікація та JWT
 Для захисту ендпоінтів використовується Bearer Token схема. При логіні сервер генерує `accessToken`, який клієнт додає до заголовків `Authorization`.
 
-### Приклад реалізації контролера (Створення лота)
-```javascript
-// Контролер обробляє завантаження файлу та валідацію дат
+### Лістинг 2.1  Контролер створення аукціону (createAuction)
+```
 export const createAuction = async (req, res) => {
-    // ... логіка підключення та витягування даних
-    if (req.file) {
-        imageUrl = await uploadImage(req.file); // Cloudinary integration
+    try {
+        await connectDB();
+        const { itemName, startingPrice, itemDescription, itemCategory, itemStartDate, itemEndDate } = req.body;
+        let imageUrl = '';
+        if (req.file) {
+            try {
+                imageUrl = await uploadImage(req.file);
+            } catch (error) {
+                return res.status(500).json({ message: 'Error uploading image to Cloudinary', error: error.message });
+            }
+        }
+        const start = itemStartDate ? new Date(itemStartDate) : new Date();
+        const end = new Date(itemEndDate);
+        if (end <= start) {
+            return res.status(400).json({ message: 'Auction end date must be after start date' });
+        }
+        const newAuction = new Product({
+            itemName,
+            startingPrice,
+            currentPrice: startingPrice,
+            itemDescription,
+            itemCategory,
+            itemPhoto: imageUrl,
+            itemStartDate: start,
+            itemEndDate: end,
+            seller: req.user.id,
+        });
+        await newAuction.save();
+        res.status(201).json({ message: 'Auction created successfully', newAuction });
+    } catch (error) {
+        res.status(500).json({ message: 'Error creating auction', error: error.message });
     }
-    const newAuction = new Product({
-        ...req.body,
-        itemPhoto: imageUrl,
-        seller: req.user.id, // ID з JWT токена
-    });
-    await newAuction.save();
-    res.status(201).json(newAuction);
 };
+```
+Даний фрагмент демонструє логіку валідації введених даних, зокрема перевірку дати завершення аукціону та обробку завантаження зображення, що дозволяє забезпечити коректність збереження інформації у базі даних.
+Метод GET для отримання інформації про всі активні аукціони реалізовано наступним чином:
+### Лістинг 2.2 Отримання списку активних аукціонів (showAuction)
+```
+export const showAuction = async (req, res) => {
+    try {
+        await connectDB();
+        const auction = await Product.find({ itemEndDate: { $gt: new Date() } })
+            .populate("seller", "name")
+            .select("itemName itemDescription currentPrice bids itemEndDate itemCategory itemPhoto seller")
+            .sort({ createdAt: -1 });
+        const formatted = auction.map(auction => ({
+            _id: auction._id,
+            itemName: auction.itemName,
+            itemDescription: auction.itemDescription,
+            currentPrice: auction.currentPrice,
+            bidsCount: auction.bids.length,
+            timeLeft: Math.max(0, new Date(auction.itemEndDate) - new Date()),
+            itemCategory: auction.itemCategory,
+            sellerName: auction.seller.name,
+            itemPhoto: auction.itemPhoto,
+        }));
+        res.status(200).json(formatted);
+    } catch (error) {
+        return res.status(500).json({ message: 'Error fetching auctions', error: error.message });
+    }
+};
+```
+Цей код ілюструє механізм отримання даних із бази та їх форматування для фронтенду, зокрема підрахунок кількості ставок та часу до завершення аукціону. Також застосовується метод populate для отримання імені продавця із колекції користувачів.
+
 ### Документація API
 До проєкту підключено Swagger, що дозволяє тестувати ендпоінти в інтерактивному режимі.
 
@@ -81,7 +132,9 @@ GET /api/auction — перегляд усіх лотів.
 POST /api/auction/:id/bid — подання ставки (доступно лише авторизованим).
 
 5. Користувацький інтерфейс
-Головна сторінка
+
+<img width="667" height="482" alt="image" src="https://github.com/user-attachments/assets/cbda1650-a4a8-4b83-8d25-d8be3c19f2fe" />
+
 Рисунок 2.3 — Візуалізація Landing Page
 
 Процес торгів
@@ -90,10 +143,121 @@ POST /api/auction/:id/bid — подання ставки (доступно ли
 6. Висновки
 В ході лабораторної роботи було розроблено захищений Backend для аукціонної платформи. Впроваджено механізми JWT-аутентифікації, обробки медіа-даних та реалізовано логіку торгів з валідацією бізнес-правил. Код відповідає принципам чистої архітектури та готовий до масштабування.
 
+# Контрольні запитання та відповіді до проєкту "Онлайн-аукціон антикваріату"
 
-### Що я додав від себе для повноти звіту:
-1.  **Markdown-розмітку**: Правильні заголовки, списки та блоки коду для GitHub.
-2.  **Акцент на завданнях**: Я явно вказав, що виконано рівні 1 та 2 (як у вашому завданні), щоб викладач бачив відповідність критеріям.
-3.  **Технічні коментарі**: Додав пояснення, як саме працює безпека (Bearer Token, Middleware).
+## 1. Різниця між аутентифікацією та авторизацією
+**Аутентифікація** — перевірка особи користувача (чи він дійсно той, ким себе видає).  
+**Авторизація** — перевірка прав користувача (що йому дозволено робити).  
 
-**Чи хочете ви, щоб я допоміг з генерацією Swagger-специфікації (JSON/YAML) для вашог
+**Приклад у проєкті:**  
+- Аутентифікація: користувач входить через email і пароль, система перевіряє правильність даних.  
+- Авторизація: лише користувач з роллю `admin` може видаляти лоти або блокувати користувачів.
+
+---
+
+## 2. JWT токен
+**JWT (JSON Web Token)** — це безпечний спосіб передачі інформації про користувача у вигляді токена.  
+
+Складається з трьох частин:  
+1. Header — містить тип токена та алгоритм підпису.  
+2. Payload — дані користувача і додаткова інформація (наприклад, id, роль).  
+3. Signature — підпис, який гарантує цілісність токена.  
+
+**Чому популярний:**  
+- Можна передавати дані без звернення до бази.  
+- Легко інтегрувати в REST API.  
+- Підтримує статeless аутентифікацію.
+
+---
+
+## 3. bcrypt
+**bcrypt** — алгоритм хешування паролів для безпечного зберігання.  
+
+- Хешує пароль з використанням **salt** — випадкових даних, що додаються до пароля для ускладнення злому через rainbow tables.  
+- Безпечний, бо навіть при однакових паролях хеші будуть різні.  
+
+---
+
+## 4. Middleware в Express.js
+**Middleware** — це функції, що обробляють запити між клієнтом і сервером.  
+
+**У проєкті використано:**  
+- `authMiddleware` — перевіряє JWT для доступу до захищених маршрутів.  
+- `roleMiddleware` — перевіряє роль користувача для авторизації дій.
+
+---
+
+## 5. RBAC (Role-Based Access Control)
+Система **RBAC** визначає доступ користувачів до ресурсів залежно від ролі.  
+
+**У проєкті:**  
+- Ролі: `user`, `admin`.  
+- `admin` може видаляти лоти та блокувати користувачів.  
+- `user` може лише переглядати лоти, створювати свої лоти та робити ставки.
+
+---
+
+## 6. Multer для завантаження файлів
+**Multer** — middleware для обробки `multipart/form-data` (завантаження файлів).  
+
+**У проєкті:**  
+- Обмеження: максимальний розмір файлу 5 МБ.  
+- Валідація: тільки зображення формату JPG, PNG.  
+- Інтегровано з Cloudinary для зберігання медіафайлів.
+
+---
+
+## 7. Пагінація
+Пагінація дозволяє розбивати великі списки на сторінки.  
+
+**Параметри у проєкті:**  
+- `page` — номер сторінки.  
+- `limit` — кількість елементів на сторінку.  
+
+**Приклад:**  
+```http
+GET /api/auction?page=2&limit=10
+```
+##8. Swagger
+
+Swagger — інструмент для автоматичної документації API.
+
+**Переваги:**
+
+-Можна тестувати endpoints прямо з документації.
+
+-Легко інтегрувати нові маршрути та підтримувати актуальність документації.
+
+-Зручно для командної роботи та зовнішніх інтеграцій.
+
+##9. Основні загрози безпеки вебдодатків
+
+-SQL/NoSQL ін’єкції
+
+-XSS (скрипти у формі)
+
+-CSRF (шкідливі запити від користувача)
+
+-Крадіжка токенів
+
+**Як мінімізовано у проєкті:**
+
+-Використання JWT з підписом.
+
+-Хешування паролів через bcrypt.
+
+-Валідація введених даних.
+
+-Захист маршрутів middleware.
+
+##10. Access токен vs Refresh токен
+
+**Access токен:** короткостроковий, використовується для авторизації запитів.
+
+**Refresh токен:** довгостроковий, використовується для отримання нового access токена без повторного логіну.
+
+**Навіщо два токени:**
+
+Зменшує ризик компрометації (короткий access токен).
+
+Дозволяє користувачу залишатися в системі без повторного входу.
