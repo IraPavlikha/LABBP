@@ -131,7 +131,7 @@ GET /api/auction — перегляд усіх лотів.
 
 POST /api/auction/:id/bid — подання ставки (доступно лише авторизованим).
 
-5. Користувацький інтерфейс
+### 5. Користувацький інтерфейс
 
 <img width="667" height="482" alt="image" src="https://github.com/user-attachments/assets/cbda1650-a4a8-4b83-8d25-d8be3c19f2fe" />
 
